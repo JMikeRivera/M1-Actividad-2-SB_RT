@@ -1,13 +1,17 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { supabase } from './lib/supabaseClient'
 import Scoreboard   from './components/Scoreboard'
 import EventFeed    from './components/EventFeed'
 import NewEventForm from './components/NewEventForm'
+import ToastContainer from './components/ToastContainer'   // [C]
 
 export default function App() {
   const [match,  setMatch]  = useState(null)
   const [events, setEvents] = useState([])
   const [error,  setError]  = useState(null)
+  const [toasts, setToasts]     = useState([])          // [C]
+  const localInsertIds          = useRef(new Set())      // [C] ids insertados por este cliente
+
 
   // ── Carga inicial ──────────────────────────────────────────────
   // Se ejecuta una sola vez al montar. Garantiza que un cliente que
@@ -42,6 +46,27 @@ export default function App() {
   useEffect(() => {
     const channel = supabase
       .channel('match-live')
+      .on(
+        'postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'match_events' },
+        (payload) => {
+          // Actualizar el feed (igual que antes)
+          setEvents((prev) => {
+            if (prev.some((e) => e.id === payload.new.id)) return prev
+            return [payload.new, ...prev]
+          })
+
+          // [C] Solo mostrar toast si el evento lo insertó otro cliente
+          if (localInsertIds.current.has(payload.new.id)) {
+            localInsertIds.current.delete(payload.new.id)
+          } else {
+            setToasts((prev) => [
+              ...prev,
+              { ...payload.new, toastId: Date.now() },
+            ])
+          }
+        },
+      )
       .on(
         'postgres_changes',
         { event: 'UPDATE', schema: 'public', table: 'match_state' },
@@ -112,6 +137,7 @@ export default function App() {
   }
 
   return (
+    
     <div style={{ maxWidth: '760px', margin: '2rem auto', padding: '0 1rem', fontFamily: 'sans-serif' }}>
       <h1 style={{ fontSize: '1.1rem', color: '#888', marginBottom: '1rem', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
         Panel de Partido en Vivo
@@ -124,9 +150,15 @@ export default function App() {
         onReset={resetScore}
       />
 
-      <NewEventForm />
+      <NewEventForm onInsert={(id) => localInsertIds.current.add(id)} />
 
       <EventFeed events={events} />
+      {/* [C] Notificaciones — fuera del flujo normal porque usan position: fixed */}
+      <ToastContainer
+        toasts={toasts}
+        onDismiss={(id) => setToasts((prev) => prev.filter((t) => t.toastId !== id))}
+      />
+
     </div>
   )
 }
