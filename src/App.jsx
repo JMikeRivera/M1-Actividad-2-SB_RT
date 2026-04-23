@@ -4,6 +4,8 @@ import Scoreboard   from './components/Scoreboard'
 import EventFeed    from './components/EventFeed'
 import NewEventForm from './components/NewEventForm'
 import ToastContainer from './components/ToastContainer'   // [C]
+import MatchChat from './components/MatchChat'   // [E]
+import PresenceIndicator from './components/PresenceIndicator'
 
 export default function App() {
   const [match,  setMatch]  = useState(null)
@@ -143,6 +145,8 @@ export default function App() {
         Panel de Partido en Vivo
       </h1>
 
+      <PresenceIndicator />    {/* [B] */}
+
       <Scoreboard
         match={match}
         onGoalHome={goalHome}
@@ -159,6 +163,7 @@ export default function App() {
         onDismiss={(id) => setToasts((prev) => prev.filter((t) => t.toastId !== id))}
       />
 
+      <MatchChat />    {/* [E] */}
     </div>
   )
 }
