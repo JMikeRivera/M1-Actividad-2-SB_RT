@@ -1,19 +1,20 @@
-import { useEffect, useRef, useState } from 'react'
-import { supabase } from './lib/supabaseClient'
-import Scoreboard   from './components/Scoreboard'
-import EventFeed    from './components/EventFeed'
-import NewEventForm from './components/NewEventForm'
-import ToastContainer from './components/ToastContainer'   // [C]
-import MatchChat from './components/MatchChat'   // [E]
-import PresenceIndicator from './components/PresenceIndicator'
+import { useEffect, useRef, useState } from "react";
+import { supabase } from "./lib/supabaseClient";
+import Scoreboard from "./components/Scoreboard";
+import EventFeed from "./components/EventFeed";
+import NewEventForm from "./components/NewEventForm";
+import ToastContainer from "./components/ToastContainer"; // [C]
+import MatchChat from "./components/MatchChat"; // [E]
+import PresenceIndicator from "./components/PresenceIndicator";
+import ScoreHistory from "./components/ScoreHistory"; // [A]
 
 export default function App() {
-  const [match,  setMatch]  = useState(null)
-  const [events, setEvents] = useState([])
-  const [error,  setError]  = useState(null)
-  const [toasts, setToasts]     = useState([])          // [C]
-  const localInsertIds          = useRef(new Set())      // [C] ids insertados por este cliente
-
+  const [match, setMatch] = useState(null);
+  const [events, setEvents] = useState([]);
+  const [error, setError] = useState(null);
+  const [toasts, setToasts] = useState([]); // [C]
+  const localInsertIds = useRef(new Set()); // [C] ids insertados por este cliente
+  const [scoreHistory, setScoreHistory] = useState([]); // [A]
 
   // ── Carga inicial ──────────────────────────────────────────────
   // Se ejecuta una sola vez al montar. Garantiza que un cliente que
@@ -22,148 +23,190 @@ export default function App() {
   useEffect(() => {
     async function loadData() {
       const { data: matchData, error: matchErr } = await supabase
-        .from('match_state')
-        .select('*')
-        .single()
+        .from("match_state")
+        .select("*")
+        .single();
 
-      if (matchErr) { setError(matchErr.message); return }
-      setMatch(matchData)
+      if (matchErr) {
+        setError(matchErr.message);
+        return;
+      }
+      setMatch(matchData);
 
       const { data: eventsData, error: eventsErr } = await supabase
-        .from('match_events')
-        .select('*')
-        .order('created_at', { ascending: false })
-        .limit(50)
+        .from("match_events")
+        .select("*")
+        .order("created_at", { ascending: false })
+        .limit(50);
 
-      if (eventsErr) { setError(eventsErr.message); return }
-      setEvents(eventsData)
+      if (eventsErr) {
+        setError(eventsErr.message);
+        return;
+      }
+      setEvents(eventsData);
     }
 
-    loadData()
-  }, [])
+    loadData();
+  }, []);
 
   // ── Suscripción Realtime ───────────────────────────────────────
   // Un canal agrupa ambas suscripciones. El cleanup cancela el canal
   // cuando el componente se desmonta, evitando listeners duplicados.
   useEffect(() => {
     const channel = supabase
-      .channel('match-live')
+      .channel("match-live")
       .on(
-        'postgres_changes',
-        { event: 'INSERT', schema: 'public', table: 'match_events' },
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "match_events" },
         (payload) => {
           // Actualizar el feed (igual que antes)
           setEvents((prev) => {
-            if (prev.some((e) => e.id === payload.new.id)) return prev
-            return [payload.new, ...prev]
-          })
+            if (prev.some((e) => e.id === payload.new.id)) return prev;
+            return [payload.new, ...prev];
+          });
 
           // [C] Solo mostrar toast si el evento lo insertó otro cliente
           if (localInsertIds.current.has(payload.new.id)) {
-            localInsertIds.current.delete(payload.new.id)
+            localInsertIds.current.delete(payload.new.id);
           } else {
             setToasts((prev) => [
               ...prev,
               { ...payload.new, toastId: Date.now() },
-            ])
+            ]);
           }
         },
       )
       .on(
-        'postgres_changes',
-        { event: 'UPDATE', schema: 'public', table: 'match_state' },
-        (payload) => setMatch(payload.new),
+        "postgres_changes",
+        { event: "UPDATE", schema: "public", table: "match_state" },
+        (payload) => {
+          setMatch(payload.new);
+          // [A] Cada UPDATE agrega una entrada al historial en memoria
+          setScoreHistory((prev) => [
+            {
+              home: payload.new.home_score,
+              away: payload.new.away_score,
+              at: new Date().toISOString(),
+            },
+            ...prev,
+          ]);
+        },
       )
       .on(
-        'postgres_changes',
-        { event: 'INSERT', schema: 'public', table: 'match_events' },
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "match_events" },
         (payload) => {
           setEvents((prev) => {
             // Evitar duplicados si la carga inicial y el evento realtime
             // llegan en orden inesperado (condición de carrera).
-            if (prev.some((e) => e.id === payload.new.id)) return prev
-            return [payload.new, ...prev]
-          })
+            if (prev.some((e) => e.id === payload.new.id)) return prev;
+            return [payload.new, ...prev];
+          });
         },
       )
-      .subscribe()
+      .subscribe();
 
     return () => {
-      supabase.removeChannel(channel)
-    }
-  }, [])
+      supabase.removeChannel(channel);
+    };
+  }, []);
 
   // ── Acciones del marcador ──────────────────────────────────────
   async function goalHome() {
-    if (!match) return
+    if (!match) return;
     await supabase
-      .from('match_state')
-      .update({ home_score: match.home_score + 1, updated_at: new Date().toISOString() })
-      .eq('id', match.id)
+      .from("match_state")
+      .update({
+        home_score: match.home_score + 1,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", match.id);
   }
 
   async function goalAway() {
-    if (!match) return
+    if (!match) return;
     await supabase
-      .from('match_state')
-      .update({ away_score: match.away_score + 1, updated_at: new Date().toISOString() })
-      .eq('id', match.id)
+      .from("match_state")
+      .update({
+        away_score: match.away_score + 1,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", match.id);
   }
 
   async function resetScore() {
-    if (!match) return
+    if (!match) return;
     await supabase
-      .from('match_state')
-      .update({ home_score: 0, away_score: 0, updated_at: new Date().toISOString() })
-      .eq('id', match.id)
+      .from("match_state")
+      .update({
+        home_score: 0,
+        away_score: 0,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", match.id);
   }
 
   // ── Render ─────────────────────────────────────────────────────
   if (error) {
     return (
-      <div style={{ padding: '2rem', color: '#c0392b', fontFamily: 'sans-serif' }}>
+      <div
+        style={{ padding: "2rem", color: "#c0392b", fontFamily: "sans-serif" }}
+      >
         <strong>Error al conectar:</strong> {error}
-        <p style={{ fontSize: '0.85rem', color: '#555' }}>
-          Verifica que VITE_SUPABASE_URL y VITE_SUPABASE_ANON_KEY estén en tu .env.local
+        <p style={{ fontSize: "0.85rem", color: "#555" }}>
+          Verifica que VITE_SUPABASE_URL y VITE_SUPABASE_ANON_KEY estén en tu
+          .env.local
         </p>
       </div>
-    )
+    );
   }
 
   if (!match) {
     return (
-      <div style={{ padding: '2rem', fontFamily: 'sans-serif', color: '#555' }}>
+      <div style={{ padding: "2rem", fontFamily: "sans-serif", color: "#555" }}>
         Conectando con Supabase...
       </div>
-    )
+    );
   }
 
   return (
-    
-    <div style={{ maxWidth: '760px', margin: '2rem auto', padding: '0 1rem', fontFamily: 'sans-serif' }}>
-      <h1 style={{ fontSize: '1.1rem', color: '#888', marginBottom: '1rem', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+    <div
+      style={{
+        maxWidth: "760px",
+        margin: "2rem auto",
+        padding: "0 1rem",
+        fontFamily: "sans-serif",
+      }}
+    >
+      <h1
+        style={{
+          fontSize: "1.1rem",
+          color: "#888",
+          marginBottom: "1rem",
+          textTransform: "uppercase",
+          letterSpacing: "0.08em",
+        }}
+      >
         Panel de Partido en Vivo
       </h1>
-
-      <PresenceIndicator />    {/* [B] */}
-
+      <PresenceIndicator /> {/* [B] */}
+      <ScoreHistory history={scoreHistory} />    {/* [A] */}
       <Scoreboard
         match={match}
         onGoalHome={goalHome}
         onGoalAway={goalAway}
         onReset={resetScore}
       />
-
       <NewEventForm onInsert={(id) => localInsertIds.current.add(id)} />
-
       <EventFeed events={events} />
       {/* [C] Notificaciones — fuera del flujo normal porque usan position: fixed */}
       <ToastContainer
         toasts={toasts}
-        onDismiss={(id) => setToasts((prev) => prev.filter((t) => t.toastId !== id))}
+        onDismiss={(id) =>
+          setToasts((prev) => prev.filter((t) => t.toastId !== id))
+        }
       />
-
-      <MatchChat />    {/* [E] */}
+      <MatchChat /> {/* [E] */}
     </div>
-  )
+  );
 }
