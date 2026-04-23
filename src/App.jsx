@@ -4,11 +4,13 @@ import Scoreboard   from './components/Scoreboard'
 import EventFeed    from './components/EventFeed'
 import NewEventForm from './components/NewEventForm'
 import MatchChat from './components/MatchChat'   // [E]
+import ScoreHistory from './components/ScoreHistory'
 
 export default function App() {
   const [match,  setMatch]  = useState(null)
   const [events, setEvents] = useState([])
   const [error,  setError]  = useState(null)
+  const [scoreHistory, setScoreHistory] = useState([]) 
 
   // ── Carga inicial ──────────────────────────────────────────────
   // Se ejecuta una sola vez al montar. Garantiza que un cliente que
@@ -60,6 +62,22 @@ export default function App() {
           })
         },
       )
+      .on(
+  'postgres_changes',
+  { event: 'UPDATE', schema: 'public', table: 'match_state' },
+  (payload) => {
+    setMatch(payload.new)
+    // [A] Cada UPDATE agrega una entrada al historial en memoria
+    setScoreHistory((prev) => [
+      {
+        home: payload.new.home_score,
+        away: payload.new.away_score,
+        at: new Date().toISOString(),
+      },
+      ...prev,
+    ])
+  },
+)
       .subscribe()
 
     return () => {
